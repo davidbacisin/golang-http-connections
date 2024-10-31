@@ -55,12 +55,24 @@ func newTracer(ctx context.Context) *httptrace.ClientTrace {
 
 	var dnsStart, connectStart, tlsStart time.Time
 	return &httptrace.ClientTrace{
-		GotFirstResponseByte: func() { MetricTimeToFirstByte.Record(ctx, time.Since(requestStart).Seconds()) },
-		DNSStart:             func(_ httptrace.DNSStartInfo) { dnsStart = time.Now() },
-		DNSDone:              func(_ httptrace.DNSDoneInfo) { MetricDNSDuration.Record(ctx, time.Since(dnsStart).Seconds()) },
-		ConnectStart:         func(_, _ string) { connectStart = time.Now() },
-		ConnectDone:          func(_, _ string, _ error) { MetricConnectDuration.Record(ctx, time.Since(connectStart).Seconds()) },
-		TLSHandshakeStart:    func() { tlsStart = time.Now() },
+		GotFirstResponseByte: func() {
+			MetricTimeToFirstByte.Record(ctx, time.Since(requestStart).Seconds())
+		},
+		DNSStart: func(_ httptrace.DNSStartInfo) {
+			dnsStart = time.Now()
+		},
+		DNSDone: func(_ httptrace.DNSDoneInfo) {
+			MetricDNSDuration.Record(ctx, time.Since(dnsStart).Seconds())
+		},
+		ConnectStart: func(_, _ string) {
+			connectStart = time.Now()
+		},
+		ConnectDone: func(_, _ string, _ error) {
+			MetricConnectDuration.Record(ctx, time.Since(connectStart).Seconds())
+		},
+		TLSHandshakeStart: func() {
+			tlsStart = time.Now()
+		},
 		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
 			MetricTLSHandshakeDuration.Record(ctx, time.Since(tlsStart).Seconds())
 		},

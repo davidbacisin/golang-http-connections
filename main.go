@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.22.0"
 )
@@ -79,11 +80,11 @@ func runBenchmark(client *http.Client) {
 			reqStart := time.Now()
 			resp, err := client.Get(targetHost)
 			defer func() {
-				opts := make([]metric.RecordOption, 0, 1)
+				attrs := make([]attribute.KeyValue, 0, 1)
 				if err != nil {
-					opts = append(opts, metric.WithAttributes(semconv.ErrorTypeKey.Int(resp.StatusCode)))
+					attrs = append(attrs, semconv.ErrorTypeKey.Int(resp.StatusCode))
 				}
-				MetricRequestDuration.Record(ctx, time.Since(reqStart).Seconds(), opts...)
+				MetricRequestDuration.Record(ctx, time.Since(reqStart).Seconds(), metric.WithAttributes(attrs...))
 				resp.Body.Close()
 			}()
 		}()

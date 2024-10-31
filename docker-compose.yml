@@ -6,8 +6,9 @@ services:
       - 4317:4317
       - 4318:4318
     volumes:
-      - $PWD/container/grafana:/data/grafana
-      - $PWD/container/prometheus:/data/prometheus
-      - $PWD/container/loki:/loki
+      - ./container/data/grafana:/data/grafana
+      - ./container/data/prometheus:/data/prometheus
+      - ./container/conf/grafana/provisioning:/otel-lgtm/grafana/conf/provisioning
+      - ./container/var/dashboards:/var/dashboards
     environment:
       - GF_PATHS_DATA=/data/grafana
