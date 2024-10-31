@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptrace"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -57,11 +58,15 @@ func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx)))
 	resp, err := t.Transport.RoundTrip(req)
 
-	attrs := make([]attribute.KeyValue, 0, 1)
+	attrs := make([]attribute.KeyValue, 0, 2)
 	if err != nil {
 		attrs = append(attrs, semconv.ErrorTypeOther)
 	} else {
 		attrs = append(attrs, semconv.HTTPResponseStatusCode(resp.StatusCode))
+
+		if _, version, ok := strings.Cut(resp.Proto, "/"); ok {
+			attrs = append(attrs, semconv.NetworkProtocolVersion(version))
+		}
 
 		if resp.StatusCode/100 == 3 {
 			logger.DebugContext(req.Context(), "redirect", "from", req.URL.String(), "to", resp.Header.Get("Location"))

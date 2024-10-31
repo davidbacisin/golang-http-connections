@@ -2,16 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
+	"io"
 	stdlog "log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -43,56 +41,27 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	client, name := NewHttp11KeepAlive()
+
 	rs, _ := resource.New(
 		ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String("golang-http-connections"),
-			semconv.ServiceInstanceIDKey.String(uuid.NewString()),
+			semconv.ServiceInstanceIDKey.String(name),
 		),
 	)
 
 	defer initOtel(ctx, rs)(ctx)
 
-	client := newHttp11ClientKeepAlive()
+	// Add request tracing to the client
 	client.Transport = &TracingRoundTripper{
 		Transport: client.Transport,
 	}
-	runBenchmark(client)
+	iter := runBenchmark(client)
+	stdlog.Printf("Performed %d iterations with client %s", iter, name)
 }
 
-func newDefaultClient() *http.Client {
-	client := http.DefaultClient
-	client.Transport = &TracingRoundTripper{
-		Transport: http.DefaultTransport,
-	}
-	return client
-}
-
-func newHttp11ClientKeepAlive() *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         dialer.DialContext,
-		ForceAttemptHTTP2:   false,
-		MaxIdleConns:        100,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			NextProtos: []string{"http/1.1"},
-		},
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-
-	return &http.Client{
-		Transport: transport,
-		Timeout:   defaultTimeout,
-	}
-}
-
-func runBenchmark(client *http.Client) {
+func runBenchmark(client *http.Client) int64 {
 	const duration = 5 * time.Second
 
 	ctx := context.Background()
@@ -106,18 +75,20 @@ func runBenchmark(client *http.Client) {
 	}()
 
 	start := time.Now()
-	iter := 0
+	var iter int64
 	for time.Since(start) < duration {
 		func() {
 			resp, err := client.Get(targetHost)
 			if err != nil {
-				logger.ErrorContext(resp.Request.Context(), "request error", "error", err)
+				logger.Error("request error", "error", err)
 				return
 			}
 			defer resp.Body.Close()
+
+			// Note that if we don't read the full response body, then the HTTP connection probably won't be reused.
+			io.ReadAll(resp.Body)
 		}()
 		iter++
 	}
-
-	stdlog.Printf("Performed %d iterations", iter)
+	return iter
 }
