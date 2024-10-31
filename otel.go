@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	stdlog "log"
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 )
 
 func initOtel(ctx context.Context) (shutdown func(context.Context) error) {
+	const exportInterval = 1 * time.Second
 	var shutdownFuncs []func(context.Context) error
 
 	shutdown = func(ctx context.Context) error {
@@ -23,16 +27,24 @@ func initOtel(ctx context.Context) (shutdown func(context.Context) error) {
 		return err
 	}
 
-	metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure())
+	logExporter, err := otlploggrpc.New(ctx, otlploggrpc.WithInsecure())
 	if err != nil {
-		log.Fatalf("could not initialize meter exporter: %+v", err)
+		stdlog.Fatalf("could not initialize log exporter: %+v", err)
 		return
 	}
 
-	meterReader := metric.NewPeriodicReader(
-		metricExporter,
-		metric.WithInterval(1*time.Second),
-	)
+	loggerProcessor := log.NewBatchProcessor(logExporter, log.WithExportInterval(exportInterval))
+	loggerProvider := log.NewLoggerProvider(log.WithProcessor(loggerProcessor))
+	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
+	global.SetLoggerProvider(loggerProvider)
+
+	metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure())
+	if err != nil {
+		stdlog.Fatalf("could not initialize meter exporter: %+v", err)
+		return
+	}
+
+	meterReader := metric.NewPeriodicReader(metricExporter, metric.WithInterval(exportInterval))
 	meterProvider := metric.NewMeterProvider(metric.WithReader(meterReader))
 	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 	otel.SetMeterProvider(meterProvider)
