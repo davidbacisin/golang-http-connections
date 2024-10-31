@@ -11,8 +11,11 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
 const (
@@ -39,7 +42,16 @@ func must[T any](t T, err error) T {
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	defer initOtel(ctx)(ctx)
+
+	rs, _ := resource.New(
+		ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String("golang-http-connections"),
+			semconv.ServiceInstanceIDKey.String(uuid.NewString()),
+		),
+	)
+
+	defer initOtel(ctx, rs)(ctx)
 
 	client := newHttp11ClientKeepAlive()
 	client.Transport = &TracingRoundTripper{
