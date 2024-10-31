@@ -13,7 +13,8 @@ import (
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"golang.org/x/sync/semaphore"
 )
 
 const (
@@ -27,7 +28,8 @@ var (
 	meter           = otel.Meter(packageName)
 	durationBuckets = []float64{0.0001, 0.00025, 0.0005, 0.00075, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
 
-	MetricNumGoroutines = must(meter.Int64Gauge("go.goroutine.count"))
+	MetricNumGoroutines      = must(meter.Int64Gauge("go.goroutine.count"))
+	MetricNumOpenConnections = must(meter.Int64Gauge("http.client.open_connections"))
 )
 
 func must[T any](t T, err error) T {
@@ -41,7 +43,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client, name := NewHttp11KeepAlive()
+	client, name := NewHttp11DisableKeepAlive()
 
 	rs, _ := resource.New(
 		ctx,
@@ -68,16 +70,26 @@ func runBenchmark(client *http.Client) int64 {
 
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
+	defer func() { // Reset gauges
+		MetricNumGoroutines.Record(ctx, 0)
+		MetricNumOpenConnections.Record(ctx, 0)
+	}()
 	go func() {
 		for range t.C {
 			MetricNumGoroutines.Record(ctx, int64(runtime.NumGoroutine()))
+			MetricNumOpenConnections.Record(ctx, CounterOpenConnections.Load())
 		}
 	}()
+
+	sem := semaphore.NewWeighted(20)
 
 	start := time.Now()
 	var iter int64
 	for time.Since(start) < duration {
-		func() {
+		sem.Acquire(ctx, 1)
+		go func() {
+			defer sem.Release(1)
+
 			resp, err := client.Get(targetHost)
 			if err != nil {
 				logger.Error("request error", "error", err)
@@ -90,5 +102,6 @@ func runBenchmark(client *http.Client) int64 {
 		}()
 		iter++
 	}
+
 	return iter
 }
