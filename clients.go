@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"net"
 	"net/http"
 	"time"
@@ -12,22 +11,19 @@ func NewDefaultClient() (*http.Client, string) {
 }
 
 func NewHttp11KeepAlive() (*http.Client, string) {
-	dialer := NewTracingDialer(&net.Dialer{
+	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
-	})
+	}
 	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         dialer.DialContext,
-		DisableKeepAlives:   false,
-		ForceAttemptHTTP2:   false,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			NextProtos: []string{"http/1.1"},
-		},
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		DisableKeepAlives:     false,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
@@ -38,25 +34,14 @@ func NewHttp11KeepAlive() (*http.Client, string) {
 }
 
 func NewHttp11DisableKeepAlive() (*http.Client, string) {
-	dialer := NewTracingDialer(&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: -1,
-		KeepAliveConfig: net.KeepAliveConfig{
-			Enable: false,
-		},
-	})
 	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         dialer.DialContext,
-		DisableKeepAlives:   true,
-		ForceAttemptHTTP2:   false,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			NextProtos: []string{"http/1.1"},
-		},
+		Proxy:                 http.ProxyFromEnvironment,
+		DisableKeepAlives:     true,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
@@ -67,19 +52,14 @@ func NewHttp11DisableKeepAlive() (*http.Client, string) {
 }
 
 func NewHttp2KeepAlive() (*http.Client, string) {
-	dialer := NewTracingDialer(&net.Dialer{})
 	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         dialer.DialContext,
-		DisableKeepAlives:   false,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			NextProtos: []string{"h2"},
-		},
+		Proxy:                 http.ProxyFromEnvironment,
+		DisableKeepAlives:     false,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 

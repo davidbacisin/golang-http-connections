@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"golang.org/x/sync/semaphore"
@@ -20,7 +22,8 @@ import (
 const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
 	targetHost     = "https://www.google.com/"
-	defaultTimeout = 500 * time.Millisecond
+	defaultTimeout = 700 * time.Millisecond
+	concurrency    = 10
 )
 
 var (
@@ -28,7 +31,10 @@ var (
 	meter           = otel.Meter(packageName)
 	durationBuckets = []float64{0.0001, 0.00025, 0.0005, 0.00075, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
 
+	CounterNumSelfGoroutines atomic.Int64
+
 	MetricNumGoroutines      = must(meter.Int64Gauge("go.goroutine.count"))
+	MetricNumSelfGoroutines  = must(meter.Int64Gauge("go.goroutine.count.self", metric.WithDescription("the number of active goroutines started directly by the process, exclusive of those started by the standard library")))
 	MetricNumOpenConnections = must(meter.Int64Gauge("http.client.open_connections"))
 )
 
@@ -43,7 +49,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client, name := NewHttp11DisableKeepAlive()
+	client, name := NewHttp2KeepAlive()
 
 	rs, _ := resource.New(
 		ctx,
@@ -68,26 +74,24 @@ func runBenchmark(client *http.Client) int64 {
 
 	ctx := context.Background()
 
-	t := time.NewTicker(time.Second)
+	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
-	defer func() { // Reset gauges
-		MetricNumGoroutines.Record(ctx, 0)
-		MetricNumOpenConnections.Record(ctx, 0)
-	}()
 	go func() {
 		for range t.C {
 			MetricNumGoroutines.Record(ctx, int64(runtime.NumGoroutine()))
-			MetricNumOpenConnections.Record(ctx, CounterOpenConnections.Load())
+			MetricNumSelfGoroutines.Record(ctx, CounterNumSelfGoroutines.Load())
 		}
 	}()
 
-	sem := semaphore.NewWeighted(20)
+	sem := semaphore.NewWeighted(concurrency)
 
 	start := time.Now()
 	var iter int64
 	for time.Since(start) < duration {
 		sem.Acquire(ctx, 1)
 		go func() {
+			CounterNumSelfGoroutines.Add(1)
+			defer CounterNumSelfGoroutines.Add(-1)
 			defer sem.Release(1)
 
 			resp, err := client.Get(targetHost)

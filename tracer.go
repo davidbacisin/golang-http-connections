@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"net"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -16,8 +14,6 @@ import (
 )
 
 var (
-	CounterOpenConnections atomic.Int64
-
 	MetricHttpConnection  = must(meter.Int64Counter("http.client.connection"))
 	MetricConnectDuration = must(meter.Float64Histogram("http.client.connect.duration",
 		metric.WithUnit("s"),
@@ -58,7 +54,7 @@ type TracingRoundTripper struct {
 func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqStart := time.Now()
 	ctx := req.Context()
-	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx)))
+	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx, t)))
 	resp, err := t.Transport.RoundTrip(req)
 
 	attrs := make([]attribute.KeyValue, 0, 2)
@@ -80,7 +76,7 @@ func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	return resp, err
 }
 
-func newTracer(ctx context.Context) *httptrace.ClientTrace {
+func newTracer(ctx context.Context, _ *TracingRoundTripper) *httptrace.ClientTrace {
 	requestStart := time.Now()
 
 	var dnsStart, connectStart, tlsStart time.Time
@@ -113,64 +109,8 @@ func newTracer(ctx context.Context) *httptrace.ClientTrace {
 				attribute.Bool("reused", gci.Reused),
 				attribute.Bool("was_idle", gci.WasIdle),
 			))
+
+			MetricIdleDuration.Record(ctx, gci.IdleTime.Seconds())
 		},
 	}
-}
-
-type TracingConn struct {
-	Ctx  context.Context
-	Conn net.Conn
-}
-
-var _ net.Conn = &TracingConn{}
-
-func (c *TracingConn) Read(b []byte) (n int, err error) {
-	return c.Conn.Read(b)
-}
-
-func (c *TracingConn) Write(b []byte) (n int, err error) {
-	return c.Conn.Write(b)
-}
-
-func (c *TracingConn) Close() error {
-	CounterOpenConnections.Add(-1)
-	return c.Conn.Close()
-}
-
-func (c *TracingConn) LocalAddr() net.Addr {
-	return c.Conn.LocalAddr()
-}
-
-func (c *TracingConn) RemoteAddr() net.Addr {
-	return c.Conn.RemoteAddr()
-}
-
-func (c *TracingConn) SetDeadline(t time.Time) error {
-	return c.Conn.SetDeadline(t)
-}
-
-func (c *TracingConn) SetReadDeadline(t time.Time) error {
-	return c.Conn.SetReadDeadline(t)
-}
-
-func (c *TracingConn) SetWriteDeadline(t time.Time) error {
-	return c.Conn.SetWriteDeadline(t)
-}
-
-type TracingDialer struct {
-	dialer *net.Dialer
-}
-
-func NewTracingDialer(base *net.Dialer) *TracingDialer {
-	return &TracingDialer{dialer: base}
-}
-
-func (d *TracingDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	base, err := d.dialer.DialContext(ctx, network, addr)
-	if err != nil {
-		return base, err
-	}
-
-	CounterOpenConnections.Add(1)
-	return &TracingConn{Ctx: ctx, Conn: base}, err
 }
