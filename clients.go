@@ -34,8 +34,16 @@ func NewHttp11KeepAlive() (*http.Client, string) {
 }
 
 func NewHttp11DisableKeepAlive() (*http.Client, string) {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: -1,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable: false,
+		},
+	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
 		DisableKeepAlives:     true,
 		ForceAttemptHTTP2:     false,
 		MaxIdleConns:          100,
