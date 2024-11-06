@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 func NewDefaultClient() (*http.Client, string) {
@@ -75,4 +77,35 @@ func NewHttp2KeepAlive() (*http.Client, string) {
 		Transport: transport,
 		Timeout:   defaultTimeout,
 	}, "http2_keepalive"
+}
+
+func NewHttp2KeepAliveLimited() (*http.Client, string) {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DisableKeepAlives:     false,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxConnsPerHost:       2,
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   defaultTimeout,
+	}, "http2_keepalive_limited"
+}
+
+func NewHttp2Special1() (*http.Client, string) {
+	transport := &http2.Transport{
+		IdleConnTimeout:            90 * time.Second,
+		StrictMaxConcurrentStreams: true,
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   defaultTimeout,
+	}, "http2_special1"
 }
