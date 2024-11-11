@@ -21,7 +21,7 @@ import (
 
 const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
-	targetHost     = "https://www.google.com/"
+	targetHost     = "https://localhost:8443/"
 	defaultTimeout = 700 * time.Millisecond
 	concurrency    = 10
 )
@@ -33,9 +33,8 @@ var (
 
 	CounterNumSelfGoroutines atomic.Int64
 
-	MetricNumGoroutines      = must(meter.Int64Gauge("go.goroutine.count"))
-	MetricNumSelfGoroutines  = must(meter.Int64Gauge("go.goroutine.count.self", metric.WithDescription("the number of active goroutines started directly by the process, exclusive of those started by the standard library")))
-	MetricNumOpenConnections = must(meter.Int64Gauge("http.client.open_connections"))
+	MetricNumGoroutines     = must(meter.Int64Gauge("go.goroutine.count"))
+	MetricNumSelfGoroutines = must(meter.Int64Gauge("go.goroutine.count.self", metric.WithDescription("the number of active goroutines started directly by the process, exclusive of those started by the standard library")))
 )
 
 func must[T any](t T, err error) T {
@@ -65,14 +64,12 @@ func main() {
 	client.Transport = &TracingRoundTripper{
 		Transport: client.Transport,
 	}
-	iter := runBenchmark(client)
+	iter := runBenchmark(ctx, client)
 	stdlog.Printf("Performed %d iterations with client %s", iter, name)
 }
 
-func runBenchmark(client *http.Client) int64 {
+func runBenchmark(ctx context.Context, client *http.Client) int64 {
 	const duration = 5 * time.Second
-
-	ctx := context.Background()
 
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
@@ -88,23 +85,29 @@ func runBenchmark(client *http.Client) int64 {
 	start := time.Now()
 	var iter int64
 	for time.Since(start) < duration {
-		sem.Acquire(ctx, 1)
-		go func() {
-			CounterNumSelfGoroutines.Add(1)
-			defer CounterNumSelfGoroutines.Add(-1)
-			defer sem.Release(1)
+		select {
+		case <-ctx.Done():
+			stdlog.Printf("cancellation signal received")
+			return iter
+		default:
+			sem.Acquire(ctx, 1)
+			go func() {
+				CounterNumSelfGoroutines.Add(1)
+				defer CounterNumSelfGoroutines.Add(-1)
+				defer sem.Release(1)
 
-			resp, err := client.Get(targetHost)
-			if err != nil {
-				logger.Error("request error", "error", err)
-				return
-			}
-			defer resp.Body.Close()
+				resp, err := client.Get(targetHost)
+				if err != nil {
+					logger.Error("request error", "error", err)
+					return
+				}
+				defer resp.Body.Close()
 
-			// Note that if we don't read the full response body, then the HTTP connection probably won't be reused.
-			io.ReadAll(resp.Body)
-		}()
-		iter++
+				// Note that if we don't read the full response body, then the HTTP connection probably won't be reused.
+				io.Copy(io.Discard, resp.Body)
+			}()
+			iter++
+		}
 	}
 
 	return iter

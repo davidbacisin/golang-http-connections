@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"time"
@@ -25,6 +26,7 @@ func NewHttp11KeepAlive() (*http.Client, string) {
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
@@ -51,6 +53,7 @@ func NewHttp11DisableKeepAlive() (*http.Client, string) {
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
@@ -69,6 +72,7 @@ func NewHttp2KeepAlive() (*http.Client, string) {
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
@@ -87,6 +91,7 @@ func NewHttp2KeepAliveLimited() (*http.Client, string) {
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		MaxConnsPerHost:       2,
@@ -102,6 +107,7 @@ func NewHttp2Special1() (*http.Client, string) {
 	transport := &http2.Transport{
 		IdleConnTimeout:            90 * time.Second,
 		StrictMaxConcurrentStreams: true,
+		TLSClientConfig:            &tls.Config{InsecureSkipVerify: true},
 	}
 
 	return &http.Client{
