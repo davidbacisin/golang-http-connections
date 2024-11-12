@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	stdlog "log"
 	"net/http"
@@ -21,9 +22,9 @@ import (
 
 const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
-	targetHost     = "https://localhost:8443/"
+	targetHost     = "http://127.0.0.1:8080/"
 	defaultTimeout = 700 * time.Millisecond
-	concurrency    = 10
+	concurrency    = 5
 )
 
 var (
@@ -48,7 +49,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client, name := NewHttp2KeepAlive()
+	client, name := NewHttp11KeepAlive()
 
 	rs, _ := resource.New(
 		ctx,
@@ -58,7 +59,12 @@ func main() {
 		),
 	)
 
-	defer initOtel(ctx, rs)(ctx)
+	shutdownOtel := initOtel(ctx, rs)
+	defer func() {
+		otelCtx, otelCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer otelCancel()
+		shutdownOtel(otelCtx)
+	}()
 
 	// Add request tracing to the client
 	client.Transport = &TracingRoundTripper{
@@ -69,25 +75,49 @@ func main() {
 }
 
 func runBenchmark(ctx context.Context, client *http.Client) int64 {
-	const duration = 5 * time.Second
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 
-	t := time.NewTicker(100 * time.Millisecond)
-	defer t.Stop()
+	metricTicker := time.NewTicker(500 * time.Millisecond)
+	defer metricTicker.Stop()
 	go func() {
-		for range t.C {
+		for range metricTicker.C {
 			MetricNumGoroutines.Record(ctx, int64(runtime.NumGoroutine()))
 			MetricNumSelfGoroutines.Record(ctx, CounterNumSelfGoroutines.Load())
+
+			_, err := RecordActiveConnectionCount(ctx)
+			if err != nil {
+				logger.Error("netstat failed", "error", err)
+			}
 		}
 	}()
 
-	sem := semaphore.NewWeighted(concurrency)
+	scalingTicker := time.NewTicker(10 * time.Second)
+	defer scalingTicker.Stop()
 
-	start := time.Now()
+	var iter atomic.Int64
+	go func() {
+		for range scalingTicker.C {
+			go func() {
+				i := startMore(ctx, client, concurrency)
+				iter.Add(i)
+			}()
+		}
+	}()
+
+	<-ctx.Done()
+	stdlog.Printf("cancellation signal received")
+	return iter.Load()
+}
+
+func startMore(ctx context.Context, client *http.Client, count int64) int64 {
+	fmt.Printf("Starting %d more concurrent processes\n", count)
+
 	var iter int64
-	for time.Since(start) < duration {
+	sem := semaphore.NewWeighted(count)
+	for {
 		select {
 		case <-ctx.Done():
-			stdlog.Printf("cancellation signal received")
 			return iter
 		default:
 			sem.Acquire(ctx, 1)
@@ -109,6 +139,4 @@ func runBenchmark(ctx context.Context, client *http.Client) int64 {
 			iter++
 		}
 	}
-
-	return iter
 }

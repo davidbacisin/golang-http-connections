@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	MetricHttpConnection  = must(meter.Int64Counter("http.client.connection"))
-	MetricConnectDuration = must(meter.Float64Histogram("http.client.connect.duration",
+	MetricHttpConnection       = must(meter.Int64Counter("http.client.connection"))
+	MetricHttpActiveRoundtrips = must(meter.Int64UpDownCounter("http.client.active_roundtrip"))
+	MetricConnectDuration      = must(meter.Float64Histogram("http.client.connect.duration",
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(durationBuckets...),
 		metric.WithDescription("Duration to perform HTTP connection"),
@@ -54,6 +55,9 @@ type TracingRoundTripper struct {
 func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqStart := time.Now()
 	ctx := req.Context()
+	MetricHttpActiveRoundtrips.Add(ctx, 1)
+	defer MetricHttpActiveRoundtrips.Add(ctx, -1)
+
 	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx, t)))
 	resp, err := t.Transport.RoundTrip(req)
 
@@ -111,6 +115,12 @@ func newTracer(ctx context.Context, _ *TracingRoundTripper) *httptrace.ClientTra
 			))
 
 			MetricIdleDuration.Record(ctx, gci.IdleTime.Seconds())
+		},
+		PutIdleConn: func(err error) {
+			// PutIdleConn is only called for HTTP/1.1, but we'll log the errors for debugging
+			if err != nil {
+				logger.Debug("PutIdleConn", "error", err)
+			}
 		},
 	}
 }
