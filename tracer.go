@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -10,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/platinummonkey/go-concurrency-limits/core"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
-	"golang.org/x/sync/semaphore"
 )
 
 var (
@@ -54,28 +55,25 @@ var (
 	MetricTcpCloseConnection  = must(meter.Int64Counter("tcp.connection.close"))
 	MetricTcpActiveConnection = must(meter.Int64Gauge("tcp.connection.active"))
 	MetricHttpResponseClose   = must(meter.Int64Counter("http.client.response.close"))
+
+	ErrRateLimitExceeded = errors.New("rate limit exceeded")
 )
 
 type TracingConn struct {
 	net.Conn
-	ctx     context.Context
-	dialer  *TracingDialer
-	release bool
+	ctx    context.Context
+	dialer *TracingDialer
 }
 
 func (c *TracingConn) Close() error {
 	MetricTcpCloseConnection.Add(c.ctx, 1)
 	c.dialer.active.Add(-1)
-	if c.release {
-		defer c.dialer.Sem.Release(1)
-	}
 	return c.Conn.Close()
 }
 
 type TracingDialer struct {
 	net.Dialer
 	active atomic.Int64
-	Sem    *semaphore.Weighted
 }
 
 func (d *TracingDialer) DialContext(ctx context.Context, network string, address string) (net.Conn, error) {
@@ -83,40 +81,43 @@ func (d *TracingDialer) DialContext(ctx context.Context, network string, address
 
 	currentActive := d.active.Add(1)
 	MetricTcpActiveConnection.Record(ctx, currentActive)
-	// time.Sleep(time.Duration(currentActive) * time.Millisecond)
-	has := false
-	err := d.Sem.Acquire(ctx, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	has = true
-	// if !has {
-	// 	logger.DebugContext(ctx, "dialer semaphore full")
-	// 	time.Sleep(1 * time.Second)
-	// }
 
 	c, err := d.Dialer.DialContext(ctx, network, address)
 	return &TracingConn{
-		Conn:    c,
-		ctx:     ctx,
-		dialer:  d,
-		release: has,
+		Conn:   c,
+		ctx:    ctx,
+		dialer: d,
 	}, err
 }
 
 type TracingRoundTripper struct {
 	Transport http.RoundTripper
+	Lim       core.Limiter
 }
 
 func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqStart := time.Now()
 	ctx := req.Context()
+
+	token, ok := t.Lim.Acquire(ctx)
+	if !ok {
+		MetricRequestDuration.Record(ctx, time.Since(reqStart).Seconds(), metric.WithAttributes(semconv.HTTPResponseStatusCode(http.StatusTooManyRequests)))
+		return nil, ErrRateLimitExceeded
+	}
+
 	MetricHttpActiveRoundtrips.Add(ctx, 1)
 	defer MetricHttpActiveRoundtrips.Add(ctx, -1)
 
 	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx, t)))
 	resp, err := t.Transport.RoundTrip(req)
+
+	if time.Since(reqStart) > 20*time.Millisecond || errors.Is(err, context.DeadlineExceeded) {
+		token.OnDropped()
+	} else if err != nil {
+		token.OnIgnore()
+	} else {
+		token.OnSuccess()
+	}
 
 	attrs := make([]attribute.KeyValue, 0, 2)
 	if err != nil {

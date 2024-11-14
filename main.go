@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	stdlog "log"
 	"net/http"
@@ -12,6 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/platinummonkey/go-concurrency-limits/core"
+	"github.com/platinummonkey/go-concurrency-limits/limit"
+	"github.com/platinummonkey/go-concurrency-limits/limiter"
+	"github.com/platinummonkey/go-concurrency-limits/strategy"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -23,8 +26,8 @@ import (
 const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
 	targetHost     = "http://127.0.0.1:8080/"
-	defaultTimeout = 2 * time.Minute
-	concurrency    = 1000
+	defaultTimeout = 700 * time.Millisecond
+	concurrency    = 100
 )
 
 var (
@@ -66,16 +69,31 @@ func main() {
 		shutdownOtel(otelCtx)
 	}()
 
+	limLogger := limit.NoopLimitLogger{}
+	// algo, _ := limit.NewGradient2Limit("gradient2", 10, 1000, 1, func(limit int) int { return 2 }, 0.2, 600, limLogger, core.EmptyMetricRegistryInstance)
+	lim, _ := limiter.NewDefaultLimiter(
+		limit.NewAIMDLimit("aimd", 10, 0.9, 2, core.EmptyMetricRegistryInstance),
+		// algo,
+		int64(1e9),
+		int64(1e9),
+		int64(1e5),
+		int(100), // Minimum observed samples to filter out sample windows with not enough significant samples
+		strategy.NewSimpleStrategy(10),
+		limLogger,
+		core.EmptyMetricRegistryInstance,
+	)
+
 	// Add request tracing to the client
 	client.Transport = &TracingRoundTripper{
 		Transport: client.Transport,
+		Lim:       lim,
 	}
 	iter := runBenchmark(ctx, client)
 	stdlog.Printf("Performed %d iterations with client %s", iter, name)
 }
 
 func runBenchmark(ctx context.Context, client *http.Client) int64 {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	metricTicker := time.NewTicker(500 * time.Millisecond)
@@ -96,14 +114,14 @@ func runBenchmark(ctx context.Context, client *http.Client) int64 {
 	defer scalingTicker.Stop()
 
 	var iter atomic.Int64
-	// go func() {
-	// 	for range scalingTicker.C {
 	go func() {
-		i := startMore(ctx, client, concurrency)
-		iter.Add(i)
+		for range scalingTicker.C {
+			go func() {
+				i := startMore(ctx, client, concurrency)
+				iter.Add(i)
+			}()
+		}
 	}()
-	// 	}
-	// }()
 
 	<-ctx.Done()
 	stdlog.Printf("cancellation signal received")
@@ -111,7 +129,7 @@ func runBenchmark(ctx context.Context, client *http.Client) int64 {
 }
 
 func startMore(ctx context.Context, client *http.Client, count int64) int64 {
-	fmt.Printf("Starting %d more concurrent processes\n", count)
+	// fmt.Printf("Starting %d more concurrent processes\n", count)
 
 	var iter int64
 	sem := semaphore.NewWeighted(count)
