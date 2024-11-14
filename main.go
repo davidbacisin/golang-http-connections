@@ -24,7 +24,7 @@ const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
 	targetHost     = "http://127.0.0.1:8080/"
 	defaultTimeout = 700 * time.Millisecond
-	concurrency    = 10
+	concurrency    = 1000
 )
 
 var (
@@ -124,6 +124,9 @@ func startMore(ctx context.Context, client *http.Client, count int64) int64 {
 			go func() {
 				CounterNumSelfGoroutines.Add(1)
 				defer CounterNumSelfGoroutines.Add(-1)
+
+				// Sleep briefly to give time for connections to return to the idle pool
+				time.Sleep(1 * time.Millisecond)
 
 				resp, err := client.Get(targetHost)
 				if err != nil {
