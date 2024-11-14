@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
@@ -46,7 +47,33 @@ var (
 		metric.WithExplicitBucketBoundaries(durationBuckets...),
 		metric.WithDescription("Duration to negotiate the TLS handshake"),
 	))
+
+	MetricTcpNewConnection   = must(meter.Int64Counter("tcp.connection.new"))
+	MetricTcpCloseConnection = must(meter.Int64Counter("tcp.connection.close"))
 )
+
+type TracingConn struct {
+	net.Conn
+	ctx context.Context
+}
+
+func (c *TracingConn) Close() error {
+	MetricTcpCloseConnection.Add(c.ctx, 1)
+	return c.Conn.Close()
+}
+
+type TracingDialer struct {
+	net.Dialer
+}
+
+func (d *TracingDialer) DialContext(ctx context.Context, network string, address string) (net.Conn, error) {
+	MetricTcpNewConnection.Add(ctx, 1)
+	c, err := d.Dialer.DialContext(ctx, network, address)
+	return &TracingConn{
+		Conn: c,
+		ctx:  ctx,
+	}, err
+}
 
 type TracingRoundTripper struct {
 	Transport http.RoundTripper

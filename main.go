@@ -24,7 +24,7 @@ const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
 	targetHost     = "http://127.0.0.1:8080/"
 	defaultTimeout = 700 * time.Millisecond
-	concurrency    = 5
+	concurrency    = 10
 )
 
 var (
@@ -96,14 +96,14 @@ func runBenchmark(ctx context.Context, client *http.Client) int64 {
 	defer scalingTicker.Stop()
 
 	var iter atomic.Int64
+	// go func() {
+	// 	for range scalingTicker.C {
 	go func() {
-		for range scalingTicker.C {
-			go func() {
-				i := startMore(ctx, client, concurrency)
-				iter.Add(i)
-			}()
-		}
+		i := startMore(ctx, client, concurrency)
+		iter.Add(i)
 	}()
+	// 	}
+	// }()
 
 	<-ctx.Done()
 	stdlog.Printf("cancellation signal received")
@@ -124,7 +124,6 @@ func startMore(ctx context.Context, client *http.Client, count int64) int64 {
 			go func() {
 				CounterNumSelfGoroutines.Add(1)
 				defer CounterNumSelfGoroutines.Add(-1)
-				defer sem.Release(1)
 
 				resp, err := client.Get(targetHost)
 				if err != nil {
@@ -132,6 +131,7 @@ func startMore(ctx context.Context, client *http.Client, count int64) int64 {
 					return
 				}
 				defer resp.Body.Close()
+				defer sem.Release(1)
 
 				// Note that if we don't read the full response body, then the HTTP connection probably won't be reused.
 				io.Copy(io.Discard, resp.Body)

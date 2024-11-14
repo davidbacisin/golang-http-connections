@@ -14,17 +14,19 @@ func NewDefaultClient() (*http.Client, string) {
 }
 
 func NewHttp11KeepAlive() (*http.Client, string) {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
+	dialer := &TracingDialer{
+		Dialer: net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		},
 	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
 		DisableKeepAlives:     false,
 		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          40,
-		MaxIdleConnsPerHost:   40,
+		MaxIdleConns:          100_000,
+		MaxIdleConnsPerHost:   100_000,
 		IdleConnTimeout:       90 * time.Second,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   10 * time.Second,
