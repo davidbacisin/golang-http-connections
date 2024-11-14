@@ -50,6 +50,7 @@ var (
 
 	MetricTcpNewConnection   = must(meter.Int64Counter("tcp.connection.new"))
 	MetricTcpCloseConnection = must(meter.Int64Counter("tcp.connection.close"))
+	MetricHttpResponseClose  = must(meter.Int64Counter("http.client.response.close"))
 )
 
 type TracingConn struct {
@@ -100,6 +101,10 @@ func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 
 		if resp.StatusCode/100 == 3 {
 			logger.DebugContext(req.Context(), "redirect", "from", req.URL.String(), "to", resp.Header.Get("Location"))
+		}
+
+		if resp.Close {
+			MetricHttpResponseClose.Add(req.Context(), 1)
 		}
 	}
 	MetricRequestDuration.Record(ctx, time.Since(reqStart).Seconds(), metric.WithAttributes(attrs...))
