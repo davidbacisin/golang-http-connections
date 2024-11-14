@@ -23,7 +23,7 @@ import (
 const (
 	packageName    = "github.com/davidbacisin/golang-http-connections"
 	targetHost     = "http://127.0.0.1:8080/"
-	defaultTimeout = 700 * time.Millisecond
+	defaultTimeout = 2 * time.Minute
 	concurrency    = 1000
 )
 

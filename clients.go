@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
+	"golang.org/x/sync/semaphore"
 )
 
 func NewDefaultClient() (*http.Client, string) {
@@ -14,19 +15,21 @@ func NewDefaultClient() (*http.Client, string) {
 }
 
 func NewHttp11KeepAlive() (*http.Client, string) {
+	poolSize := 10
 	dialer := &TracingDialer{
 		Dialer: net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		},
+		Sem: semaphore.NewWeighted(int64(poolSize)),
 	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
 		DisableKeepAlives:     false,
 		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          10,
-		MaxIdleConnsPerHost:   10,
+		MaxIdleConns:          poolSize,
+		MaxIdleConnsPerHost:   poolSize,
 		IdleConnTimeout:       90 * time.Second,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   10 * time.Second,

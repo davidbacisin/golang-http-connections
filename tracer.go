@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"golang.org/x/sync/semaphore"
 )
 
 var (
@@ -48,31 +50,58 @@ var (
 		metric.WithDescription("Duration to negotiate the TLS handshake"),
 	))
 
-	MetricTcpNewConnection   = must(meter.Int64Counter("tcp.connection.new"))
-	MetricTcpCloseConnection = must(meter.Int64Counter("tcp.connection.close"))
-	MetricHttpResponseClose  = must(meter.Int64Counter("http.client.response.close"))
+	MetricTcpNewConnection    = must(meter.Int64Counter("tcp.connection.new"))
+	MetricTcpCloseConnection  = must(meter.Int64Counter("tcp.connection.close"))
+	MetricTcpActiveConnection = must(meter.Int64Gauge("tcp.connection.active"))
+	MetricHttpResponseClose   = must(meter.Int64Counter("http.client.response.close"))
 )
 
 type TracingConn struct {
 	net.Conn
-	ctx context.Context
+	ctx     context.Context
+	dialer  *TracingDialer
+	release bool
 }
 
 func (c *TracingConn) Close() error {
 	MetricTcpCloseConnection.Add(c.ctx, 1)
+	c.dialer.active.Add(-1)
+	if c.release {
+		defer c.dialer.Sem.Release(1)
+	}
 	return c.Conn.Close()
 }
 
 type TracingDialer struct {
 	net.Dialer
+	active atomic.Int64
+	Sem    *semaphore.Weighted
 }
 
 func (d *TracingDialer) DialContext(ctx context.Context, network string, address string) (net.Conn, error) {
 	MetricTcpNewConnection.Add(ctx, 1)
+
+	currentActive := d.active.Add(1)
+	MetricTcpActiveConnection.Record(ctx, currentActive)
+	// time.Sleep(time.Duration(currentActive) * time.Millisecond)
+	has := false
+	err := d.Sem.Acquire(ctx, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	has = true
+	// if !has {
+	// 	logger.DebugContext(ctx, "dialer semaphore full")
+	// 	time.Sleep(1 * time.Second)
+	// }
+
 	c, err := d.Dialer.DialContext(ctx, network, address)
 	return &TracingConn{
-		Conn: c,
-		ctx:  ctx,
+		Conn:    c,
+		ctx:     ctx,
+		dialer:  d,
+		release: has,
 	}, err
 }
 
