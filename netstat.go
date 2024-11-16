@@ -58,12 +58,19 @@ func RecordActiveConnectionCount(ctx context.Context) (int64, error) {
 		}
 
 		if len(fields) == 5 {
+			// Ignore connections to the OTEL agent
+			remote := fields[2]
+			if strings.HasSuffix(remote, ":4317") || strings.HasSuffix(remote, ":4318") {
+				continue
+			}
+
 			state := fields[3]
 			pid, err := strconv.ParseInt(strings.TrimSpace(fields[4]), 10, 64)
 			if err != nil {
 				continue
 			}
 
+			// Only count connections from the current process
 			if pid == self {
 				if _, ok := counts[state]; !ok {
 					counts[state] = 0

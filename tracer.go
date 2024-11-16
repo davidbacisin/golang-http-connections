@@ -11,16 +11,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/platinummonkey/go-concurrency-limits/core"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 var (
-	MetricHttpConnection       = must(meter.Int64Counter("http.client.connection"))
-	MetricHttpActiveRoundtrips = must(meter.Int64UpDownCounter("http.client.active_roundtrip"))
-	MetricConnectDuration      = must(meter.Float64Histogram("http.client.connect.duration",
+	MetricHttpConnection  = must(meter.Int64Counter("http.client.connection"))
+	MetricConnectDuration = must(meter.Float64Histogram("http.client.connect.duration",
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(durationBuckets...),
 		metric.WithDescription("Duration to perform HTTP connection"),
@@ -92,32 +90,14 @@ func (d *TracingDialer) DialContext(ctx context.Context, network string, address
 
 type TracingRoundTripper struct {
 	Transport http.RoundTripper
-	Lim       core.Limiter
 }
 
 func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqStart := time.Now()
 	ctx := req.Context()
 
-	token, ok := t.Lim.Acquire(ctx)
-	if !ok {
-		MetricRequestDuration.Record(ctx, time.Since(reqStart).Seconds(), metric.WithAttributes(semconv.HTTPResponseStatusCode(http.StatusTooManyRequests)))
-		return nil, ErrRateLimitExceeded
-	}
-
-	MetricHttpActiveRoundtrips.Add(ctx, 1)
-	defer MetricHttpActiveRoundtrips.Add(ctx, -1)
-
 	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx, t)))
 	resp, err := t.Transport.RoundTrip(req)
-
-	if time.Since(reqStart) > 20*time.Millisecond || errors.Is(err, context.DeadlineExceeded) {
-		token.OnDropped()
-	} else if err != nil {
-		token.OnIgnore()
-	} else {
-		token.OnSuccess()
-	}
 
 	attrs := make([]attribute.KeyValue, 0, 2)
 	if err != nil {
