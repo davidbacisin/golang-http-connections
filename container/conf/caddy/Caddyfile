@@ -1,0 +1,4 @@
+localhost {
+    respond "Hello from Caddy!"
+    tls internal
+}

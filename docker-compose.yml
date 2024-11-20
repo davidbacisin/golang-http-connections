@@ -1,13 +1,22 @@
 services:
-  nginx:
-    image: nginx:1.27
+  # nginx:
+  #   image: nginx:1.27
+  #   ports:
+  #     - 8080:80
+  #     - 8443:443
+  #   volumes:
+  #     - ./container/html:/usr/share/nginx/html:ro
+  #     - ./container/conf/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./container/conf/nginx/40-generate-cert.sh:/docker-entrypoint.d/40-generate-cert.sh:ro
+  caddy:
+    image: caddy:2.9-alpine
     ports:
       - 8080:80
       - 8443:443
     volumes:
-      - ./container/html:/usr/share/nginx/html:ro
-      - ./container/conf/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./container/conf/nginx/40-generate-cert.sh:/docker-entrypoint.d/40-generate-cert.sh:ro
+      - ./container/data/caddy:/data
+      #- ./container/html:/usr/share/caddy
+      - ./container/conf/caddy/Caddyfile:/etc/caddy/Caddyfile
   otel:
     image: docker.io/grafana/otel-lgtm:0.7.6
     ports:

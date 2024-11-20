@@ -96,6 +96,9 @@ func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	reqStart := time.Now()
 	ctx := req.Context()
 
+	ctx, span := tracer.Start(ctx, "RoundTrip")
+	defer span.End()
+
 	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx, t)))
 	resp, err := t.Transport.RoundTrip(req)
 
@@ -149,7 +152,7 @@ func newTracer(ctx context.Context, _ *TracingRoundTripper) *httptrace.ClientTra
 			MetricTLSHandshakeDuration.Record(ctx, time.Since(tlsStart).Seconds())
 		},
 		GotConn: func(gci httptrace.GotConnInfo) {
-			logger.Debug("GotConn", "address", gci.Conn.RemoteAddr().String())
+			//logger.Debug("GotConn", "address", gci.Conn.RemoteAddr().String())
 
 			MetricHttpConnection.Add(ctx, 1, metric.WithAttributes(
 				attribute.Bool("reused", gci.Reused),

@@ -9,10 +9,12 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 func initOtel(ctx context.Context, rs *resource.Resource) (shutdown func(context.Context) error) {
@@ -49,6 +51,17 @@ func initOtel(ctx context.Context, rs *resource.Resource) (shutdown func(context
 	meterProvider := metric.NewMeterProvider(metric.WithResource(rs), metric.WithReader(meterReader))
 	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 	otel.SetMeterProvider(meterProvider)
+
+	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
+	if err != nil {
+		stdlog.Fatalf("could not initialize trace exporter: %+v", err)
+		return
+	}
+
+	traceProvider := trace.NewTracerProvider(trace.WithResource(rs),
+		trace.WithBatcher(traceExporter, trace.WithBatchTimeout(exportInterval)))
+	shutdownFuncs = append(shutdownFuncs, traceProvider.Shutdown)
+	otel.SetTracerProvider(traceProvider)
 
 	return
 }
