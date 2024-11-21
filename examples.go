@@ -68,7 +68,7 @@ var (
 		Name: "Example 2.1: default HTTP/2 client",
 		Stages: []Stage{
 			{VUs: 2, Duration: "20s"},
-			{VUs: 10, Duration: "20s"},
+			{VUs: 100, Duration: "20s"},
 			{VUs: 2, Duration: "20s"},
 		},
 		NewClient: func() *http.Client {
