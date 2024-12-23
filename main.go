@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -44,10 +45,13 @@ func must[T any](t T, err error) T {
 }
 
 func main() {
+	runtime.GOMAXPROCS(4)
+	debug.SetMaxThreads(30_000)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	scenario := Example2_1
+	scenario := Example2_3
 
 	rs, _ := resource.New(
 		ctx,
@@ -116,6 +120,8 @@ func runScenario(ctx context.Context, scenario Scenario) int64 {
 					// Sleep briefly to give time for connections to return to the idle pool
 					time.Sleep(1 * time.Microsecond)
 
+					// ctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+					// defer cancel()
 					req, _ := http.NewRequestWithContext(ctx, http.MethodGet, targetHost, http.NoBody)
 					resp, err := client.Do(req)
 					if err != nil {

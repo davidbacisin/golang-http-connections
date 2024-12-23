@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 type Stage struct {
@@ -64,6 +66,22 @@ var (
 		},
 	}
 
+	Example1_3 = Scenario{
+		Name: "Example 1.3: HTTP/1.1 client with MaxConnsPerHost",
+		Stages: []Stage{
+			{VUs: 2, Duration: "20s"},
+			{VUs: 100, Duration: "20s"},
+			{VUs: 2, Duration: "20s"},
+		},
+		NewClient: func() *http.Client {
+			client := Example1_1.NewClient()
+			transport := client.Transport.(*http.Transport)
+			transport.MaxIdleConnsPerHost = 10
+			transport.MaxConnsPerHost = 20
+			return client
+		},
+	}
+
 	Example2_1 = Scenario{
 		Name: "Example 2.1: default HTTP/2 client",
 		Stages: []Stage{
@@ -81,6 +99,37 @@ var (
 				TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
+			}
+			return &http.Client{
+				Transport: transport,
+				Timeout:   3 * time.Second,
+			}
+		},
+	}
+
+	Example2_2 = Scenario{
+		Name: "Example 2.2: default HTTP/2 client with extended stages",
+		Stages: []Stage{
+			{VUs: 2, Duration: "20s"},
+			{VUs: 100, Duration: "20s"},
+			{VUs: 200, Duration: "20s"},
+			{VUs: 300, Duration: "20s"},
+			{VUs: 400, Duration: "20s"},
+			{VUs: 2, Duration: "20s"},
+		},
+		NewClient: func() *http.Client {
+			return Example2_1.NewClient()
+		},
+	}
+
+	Example2_3 = Scenario{
+		Name:   "Example 2.3: HTTP/2 client with strict max concurrent streams",
+		Stages: Example2_2.Stages,
+		NewClient: func() *http.Client {
+			transport := &http2.Transport{
+				StrictMaxConcurrentStreams: true,
+				IdleConnTimeout:            90 * time.Second,
+				TLSClientConfig:            &tls.Config{InsecureSkipVerify: true},
 			}
 			return &http.Client{
 				Transport: transport,
