@@ -1,0 +1,1 @@
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/nginx/nginx-selfsigned.key -out /etc/nginx/nginx-selfsigned.crt -subj "/C=US/ST=New York/L=New York City/O=Global/OU=Global/CN=example.com"

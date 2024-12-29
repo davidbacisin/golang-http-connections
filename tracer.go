@@ -3,19 +3,21 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/http/httptrace"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	semconv "go.opentelemetry.io/otel/semconv/v1.22.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 var (
-	MetricHttpConnection     = must(meter.Int64Counter("http.client.connection"))
-	MetricHttpConnectionPool = must(meter.Int64UpDownCounter("http.client.pool.size"))
-	MetricConnectDuration    = must(meter.Float64Histogram("http.client.connect.duration",
+	MetricHttpConnection  = must(meter.Int64Counter("http.client.connection"))
+	MetricConnectDuration = must(meter.Float64Histogram("http.client.connect.duration",
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(durationBuckets...),
 		metric.WithDescription("Duration to perform HTTP connection"),
@@ -45,7 +47,47 @@ var (
 		metric.WithExplicitBucketBoundaries(durationBuckets...),
 		metric.WithDescription("Duration to negotiate the TLS handshake"),
 	))
+
+	MetricTcpNewConnection    = must(meter.Int64Counter("tcp.connection.new"))
+	MetricTcpCloseConnection  = must(meter.Int64Counter("tcp.connection.close"))
+	MetricTcpActiveConnection = must(meter.Int64Gauge("tcp.connection.active"))
+	MetricHttpResponseClose   = must(meter.Int64Counter("http.client.response.close"))
 )
+
+// TracingConn is used in conjunction with [TracingDialer] to track the opening and closing of
+// network connections.
+type TracingConn struct {
+	net.Conn
+	ctx    context.Context
+	dialer *TracingDialer
+}
+
+func (c *TracingConn) Close() error {
+	MetricTcpCloseConnection.Add(c.ctx, 1)
+	c.dialer.active.Add(-1)
+	return c.Conn.Close()
+}
+
+// TracingDialer provides a custom DialContext that enables tracking the opening and closing of
+// network connections.
+type TracingDialer struct {
+	net.Dialer
+	active atomic.Int64
+}
+
+func (d *TracingDialer) DialContext(ctx context.Context, network string, address string) (net.Conn, error) {
+	MetricTcpNewConnection.Add(ctx, 1)
+
+	currentActive := d.active.Add(1)
+	MetricTcpActiveConnection.Record(ctx, currentActive)
+
+	c, err := d.Dialer.DialContext(ctx, network, address)
+	return &TracingConn{
+		Conn:   c,
+		ctx:    ctx,
+		dialer: d,
+	}, err
+}
 
 type TracingRoundTripper struct {
 	Transport http.RoundTripper
@@ -54,17 +96,30 @@ type TracingRoundTripper struct {
 func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqStart := time.Now()
 	ctx := req.Context()
-	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx)))
+
+	ctx, span := tracer.Start(ctx, "RoundTrip")
+	defer span.End()
+
+	req = req.WithContext(httptrace.WithClientTrace(ctx, newTracer(ctx, t)))
 	resp, err := t.Transport.RoundTrip(req)
 
-	attrs := make([]attribute.KeyValue, 0, 1)
+	attrs := make([]attribute.KeyValue, 0, 2)
 	if err != nil {
 		attrs = append(attrs, semconv.ErrorTypeOther)
 	} else {
 		attrs = append(attrs, semconv.HTTPResponseStatusCode(resp.StatusCode))
 
+		if _, version, ok := strings.Cut(resp.Proto, "/"); ok {
+			attrs = append(attrs, semconv.NetworkProtocolVersion(version))
+		}
+
 		if resp.StatusCode/100 == 3 {
 			logger.DebugContext(req.Context(), "redirect", "from", req.URL.String(), "to", resp.Header.Get("Location"))
+		}
+
+		if resp.Close {
+			// The server has signaled that the client should close the connection.
+			MetricHttpResponseClose.Add(req.Context(), 1)
 		}
 	}
 	MetricRequestDuration.Record(ctx, time.Since(reqStart).Seconds(), metric.WithAttributes(attrs...))
@@ -72,7 +127,7 @@ func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	return resp, err
 }
 
-func newTracer(ctx context.Context) *httptrace.ClientTrace {
+func newTracer(ctx context.Context, _ *TracingRoundTripper) *httptrace.ClientTrace {
 	requestStart := time.Now()
 
 	var dnsStart, connectStart, tlsStart time.Time
@@ -99,20 +154,17 @@ func newTracer(ctx context.Context) *httptrace.ClientTrace {
 			MetricTLSHandshakeDuration.Record(ctx, time.Since(tlsStart).Seconds())
 		},
 		GotConn: func(gci httptrace.GotConnInfo) {
-			logger.Debug("GotConn", "address", gci.Conn.RemoteAddr().String())
-
 			MetricHttpConnection.Add(ctx, 1, metric.WithAttributes(
 				attribute.Bool("reused", gci.Reused),
 				attribute.Bool("was_idle", gci.WasIdle),
 			))
 
-			if gci.WasIdle {
-				MetricHttpConnectionPool.Add(ctx, -1)
-			}
+			MetricIdleDuration.Record(ctx, gci.IdleTime.Seconds())
 		},
 		PutIdleConn: func(err error) {
-			if err == nil {
-				MetricHttpConnectionPool.Add(ctx, 1)
+			// PutIdleConn is only called for HTTP/1.1, but we'll log the errors for debugging
+			if err != nil {
+				logger.Debug("PutIdleConn", "error", err)
 			}
 		},
 	}
