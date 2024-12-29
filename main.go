@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -18,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/exp/maps"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -46,12 +49,12 @@ func must[T any](t T, err error) T {
 
 func main() {
 	runtime.GOMAXPROCS(4)
-	debug.SetMaxThreads(30_000)
+	debug.SetMaxThreads(30_000) // increase max threads to prevent crashes due to high thread count
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	scenario := Example2_3
+	scenario := selectScenerio()
 
 	rs, _ := resource.New(
 		ctx,
@@ -75,6 +78,7 @@ func main() {
 		for range metricTicker.C {
 			MetricNumGoroutines.Record(ctx, int64(runtime.NumGoroutine()))
 
+			// Run netstat
 			_, err := RecordActiveConnectionCount(ctx)
 			if err != nil {
 				logger.Error("netstat failed", "error", err)
@@ -84,6 +88,23 @@ func main() {
 
 	iter := runScenario(ctx, scenario)
 	stdlog.Printf("Performed %d iterations from scenario %s", iter, scenario.Name)
+}
+
+func selectScenerio() Scenario {
+	if len(os.Args) < 2 {
+		stdlog.Fatalln("fatal: provide a scenario id as the only unnamed argument")
+		return Scenario{}
+	}
+
+	id := os.Args[1]
+	s, ok := Scenarios[id]
+	if !ok {
+		ids := maps.Keys(Scenarios)
+		slices.Sort(ids)
+		stdlog.Fatalf("fatal: provide a valid scenario name, one of: %s", strings.Join(ids, ", "))
+	}
+
+	return s
 }
 
 func runScenario(ctx context.Context, scenario Scenario) int64 {
@@ -117,11 +138,9 @@ func runScenario(ctx context.Context, scenario Scenario) int64 {
 					MetricNumActiveVUs.Add(ctx, 1)
 					defer MetricNumActiveVUs.Add(ctx, -1)
 
-					// Sleep briefly to give time for connections to return to the idle pool
+					// Sleep very briefly to give time for connections to return to the idle pool
 					time.Sleep(1 * time.Microsecond)
 
-					// ctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
-					// defer cancel()
 					req, _ := http.NewRequestWithContext(ctx, http.MethodGet, targetHost, http.NoBody)
 					resp, err := client.Do(req)
 					if err != nil {
@@ -130,7 +149,7 @@ func runScenario(ctx context.Context, scenario Scenario) int64 {
 					}
 					defer resp.Body.Close()
 
-					// Note that if we don't read the full response body, then the HTTP connection probably won't be reused.
+					// Note that if we don't read the full response body, then the HTTP connection won't be reused.
 					io.Copy(io.Discard, resp.Body)
 				}(iter)
 				iter++

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -53,10 +52,10 @@ var (
 	MetricTcpCloseConnection  = must(meter.Int64Counter("tcp.connection.close"))
 	MetricTcpActiveConnection = must(meter.Int64Gauge("tcp.connection.active"))
 	MetricHttpResponseClose   = must(meter.Int64Counter("http.client.response.close"))
-
-	ErrRateLimitExceeded = errors.New("rate limit exceeded")
 )
 
+// TracingConn is used in conjunction with [TracingDialer] to track the opening and closing of
+// network connections.
 type TracingConn struct {
 	net.Conn
 	ctx    context.Context
@@ -69,6 +68,8 @@ func (c *TracingConn) Close() error {
 	return c.Conn.Close()
 }
 
+// TracingDialer provides a custom DialContext that enables tracking the opening and closing of
+// network connections.
 type TracingDialer struct {
 	net.Dialer
 	active atomic.Int64
@@ -117,6 +118,7 @@ func (t *TracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		}
 
 		if resp.Close {
+			// The server has signaled that the client should close the connection.
 			MetricHttpResponseClose.Add(req.Context(), 1)
 		}
 	}
@@ -152,8 +154,6 @@ func newTracer(ctx context.Context, _ *TracingRoundTripper) *httptrace.ClientTra
 			MetricTLSHandshakeDuration.Record(ctx, time.Since(tlsStart).Seconds())
 		},
 		GotConn: func(gci httptrace.GotConnInfo) {
-			//logger.Debug("GotConn", "address", gci.Conn.RemoteAddr().String())
-
 			MetricHttpConnection.Add(ctx, 1, metric.WithAttributes(
 				attribute.Bool("reused", gci.Reused),
 				attribute.Bool("was_idle", gci.WasIdle),

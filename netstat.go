@@ -33,6 +33,9 @@ func netstat(ctx context.Context) *exec.Cmd {
 	return exec.CommandContext(ctx, "netstat", "-ano")
 }
 
+// RecordActiveConnectionCount executes netstat and then parses its output to update the
+// OTEL metrics on how many connections are observed by netstat for the currently running process ID.
+// Connections over the OTEL-specific ports are ignored.
 func RecordActiveConnectionCount(ctx context.Context) (int64, error) {
 	start := time.Now()
 	defer func() {

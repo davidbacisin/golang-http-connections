@@ -21,6 +21,15 @@ type Scenario struct {
 }
 
 var (
+	Scenarios = map[string]Scenario{
+		"1.1": Example1_1,
+		"1.2": Example1_2,
+		"1.3": Example1_3,
+		"2.1": Example2_1,
+		"2.2": Example2_2,
+		"2.3": Example2_3,
+	}
+
 	Example1_1 = Scenario{
 		Name: "Example 1.1: default HTTP/1.1 client",
 		Stages: []Stage{
