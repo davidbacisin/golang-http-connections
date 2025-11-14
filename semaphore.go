@@ -9,11 +9,6 @@ import (
 	"sync"
 )
 
-type waiter struct {
-	n     int64
-	ready chan<- struct{} // Closed when semaphore acquired.
-}
-
 // NewWeighted creates a new weighted semaphore with the given
 // maximum combined weight for concurrent access.
 func NewWeighted(n int64) *Weighted {
@@ -46,7 +41,7 @@ func (s *Weighted) SetSize(n int64) {
 // Acquire acquires the semaphore with a weight of n, blocking until resources
 // are available or ctx is done. On success, returns nil. On failure, returns
 // ctx.Err() and leaves the semaphore unchanged.
-func (s *Weighted) Acquire(ctx context.Context, n int64) error {
+func (s *Weighted) Acquire(ctx context.Context) error {
 	done := ctx.Done()
 
 	s.mu.Lock()
@@ -60,26 +55,18 @@ func (s *Weighted) Acquire(ctx context.Context, n int64) error {
 		return ctx.Err()
 	default:
 	}
-	if s.size-s.cur >= n && s.waiters.Len() == 0 {
+	if s.size-s.cur >= 1 && s.waiters.Len() == 0 {
 		// Since we hold s.mu and haven't synchronized since checking done, if
 		// ctx becomes done before we return here, it becoming done must have
 		// "happened concurrently" with this call - it cannot "happen before"
 		// we return in this branch. So, we're ok to always acquire here.
-		s.cur += n
+		s.cur++
 		s.mu.Unlock()
 		return nil
 	}
 
-	if n > s.size {
-		// Don't make other Acquire calls block on one that's doomed to fail.
-		s.mu.Unlock()
-		<-done
-		return ctx.Err()
-	}
-
 	ready := make(chan struct{})
-	w := waiter{n: n, ready: ready}
-	elem := s.waiters.PushBack(w)
+	elem := s.waiters.PushBack(ready)
 	s.mu.Unlock()
 
 	select {
@@ -89,7 +76,7 @@ func (s *Weighted) Acquire(ctx context.Context, n int64) error {
 		case <-ready:
 			// Acquired the semaphore after we were canceled.
 			// Pretend we didn't and put the tokens back.
-			s.cur -= n
+			s.cur--
 			s.notifyWaiters()
 		default:
 			isFront := s.waiters.Front() == elem
@@ -109,7 +96,7 @@ func (s *Weighted) Acquire(ctx context.Context, n int64) error {
 		// depth of ctx.
 		select {
 		case <-done:
-			s.Release(n)
+			s.Release()
 			return ctx.Err()
 		default:
 		}
@@ -118,9 +105,9 @@ func (s *Weighted) Acquire(ctx context.Context, n int64) error {
 }
 
 // Release releases the semaphore with a weight of n.
-func (s *Weighted) Release(n int64) {
+func (s *Weighted) Release() {
 	s.mu.Lock()
-	s.cur -= n
+	s.cur--
 	if s.cur < 0 {
 		s.mu.Unlock()
 		panic("semaphore: released more than held")
@@ -136,8 +123,8 @@ func (s *Weighted) notifyWaiters() {
 			break // No more waiters blocked.
 		}
 
-		w := next.Value.(waiter)
-		if s.size-s.cur < w.n {
+		w := next.Value.(chan struct{})
+		if s.size-s.cur < 1 {
 			// Not enough tokens for the next waiter.  We could keep going (to try to
 			// find a waiter with a smaller request), but under load that could cause
 			// starvation for large requests; instead, we leave all remaining waiters
@@ -152,8 +139,8 @@ func (s *Weighted) notifyWaiters() {
 			break
 		}
 
-		s.cur += w.n
+		s.cur++
 		s.waiters.Remove(next)
-		close(w.ready)
+		close(w)
 	}
 }

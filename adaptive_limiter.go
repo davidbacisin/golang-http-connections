@@ -102,7 +102,7 @@ func (l *Gradient2Limiter) OnSample(rtt int64, inFlight int64) {
 	longRTT := l.longAvg.Mean()
 
 	// Clamp the gradient to avoid excessive swings
-	gradient := max(0.5, min(1.0, longRTT/shortRTT))
+	gradient := max(0.7, min(1.0, longRTT/shortRTT))
 	l.updateLocked(gradient)
 }
 
@@ -128,7 +128,6 @@ type AdaptiveTransport struct {
 }
 
 func NewAdaptiveTransport(base http.RoundTripper, limiter *Gradient2Limiter) *AdaptiveTransport {
-	//notify := make(chan struct{})
 	t := &AdaptiveTransport{
 		base:    base,
 		limiter: limiter,
@@ -140,11 +139,11 @@ func NewAdaptiveTransport(base http.RoundTripper, limiter *Gradient2Limiter) *Ad
 func (t *AdaptiveTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	t.sem.SetSize(t.limiter.Limit())
-	err := t.sem.Acquire(ctx, 1)
+	err := t.sem.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer t.sem.Release(1)
+	defer t.sem.Release()
 
 	semCount := t.sem.Count()
 	MetricAdaptiveTransport.Record(ctx, semCount)

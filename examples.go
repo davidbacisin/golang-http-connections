@@ -222,7 +222,7 @@ var (
 			client := Example3_1.NewClient()
 			transport := client.Transport.(*http.Transport)
 
-			lim, err := NewGradient2Limiter(2, transport.MaxConnsPerHost, 1, 0.01, 4.0, 10, 10_000)
+			lim, err := NewGradient2Limiter(2, transport.MaxConnsPerHost, 1, 0.001, 4.0, 2<<4, 2<<14)
 			if err != nil {
 				log.Fatalf("failed to create Gradient2Limiter: %v", err)
 			}
