@@ -5,19 +5,26 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/davidbacisin/go-mwnd"
 	"go.opentelemetry.io/otel/metric"
 )
 
-var MetricAdaptiveConcurrency = must(meter.Int64Gauge("limiter.adaptive_concurrency",
-	metric.WithDescription("the current concurrency limit of the adaptive concurrency limiter"),
-))
-
-var MetricAdaptiveTransport = must(meter.Int64Gauge("limiter.adaptive_transport_active",
-	metric.WithDescription("the current number of active requests in the adaptive transport"),
-))
+var (
+	MetricAdaptiveConcurrency = must(meter.Int64Gauge("limiter.adaptive_concurrency",
+		metric.WithDescription("the current concurrency limit of the adaptive concurrency limiter"),
+	))
+	MetricActiveRequests = must(meter.Int64Gauge("http.client.request.active",
+		metric.WithDescription("the current number of active requests in the adaptive transport"),
+	))
+	MetricInjectedDuration = must(meter.Int64Histogram("http.client.request.injected.duration",
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(durationBuckets...),
+		metric.WithDescription("the latency injected into the HTTP request"),
+	))
+)
 
 // Gradient2Limiter is a concurrency limiter that adjusts its limit based on observed latencies.
 // It increases the limit when latencies are low and decreases it when latencies rise,
@@ -146,7 +153,7 @@ func (t *AdaptiveTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	defer t.sem.Release()
 
 	semCount := t.sem.Count()
-	MetricAdaptiveTransport.Record(ctx, semCount)
+	MetricActiveRequests.Record(ctx, semCount)
 
 	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
@@ -157,4 +164,35 @@ func (t *AdaptiveTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 	t.limiter.OnSample(int64(rtt), semCount)
 	return resp, nil
+}
+
+type LatencyInjector struct {
+	Transport http.RoundTripper
+	Start     time.Time
+
+	// Inject is provided the time since the start of the stage and the number of
+	// active requests. It should return the amount of latency to inject.
+	Inject func(time.Duration, int64) time.Duration
+
+	active atomic.Int64
+}
+
+func (t *LatencyInjector) RoundTrip(req *http.Request) (*http.Response, error) {
+	active := t.active.Add(1)
+	defer t.active.Add(-1)
+	resp, err := t.Transport.RoundTrip(req)
+	latency := time.Duration(0)
+	if t.Inject != nil {
+		latency = t.Inject(time.Since(t.Start), active)
+	}
+	if latency > 0 {
+		ctx := req.Context()
+		select {
+		case <-ctx.Done(): // allow early return if context is cancelled
+			return nil, ctx.Err()
+		case <-time.After(latency):
+		}
+	}
+	MetricInjectedDuration.Record(req.Context(), latency.Milliseconds())
+	return resp, err
 }

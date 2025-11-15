@@ -25,9 +25,8 @@ import (
 )
 
 const (
-	packageName    = "github.com/davidbacisin/golang-http-connections"
-	targetHost     = "https://127.0.0.1:8443/"
-	defaultTimeout = 700 * time.Millisecond
+	packageName = "github.com/davidbacisin/golang-http-connections"
+	targetHost  = "https://127.0.0.1:8443/"
 )
 
 var (
@@ -111,8 +110,11 @@ func runScenario(ctx context.Context, scenario Scenario) int64 {
 	ctx, span := tracer.Start(ctx, "Scenario")
 	defer span.End()
 
+	// Add a latency simulator
+	latencyInjector := &LatencyInjector{}
+	client := scenario.NewClient(latencyInjector)
+
 	// Add request tracing to the client
-	client := scenario.NewClient()
 	client.Transport = &TracingRoundTripper{
 		Transport: client.Transport,
 	}
@@ -126,6 +128,11 @@ func runScenario(ctx context.Context, scenario Scenario) int64 {
 		dur := must(time.ParseDuration(stage.Duration))
 		sem := semaphore.NewWeighted(int64(stage.VUs))
 		start := time.Now()
+
+		// Update the latency injector before we start
+		latencyInjector.Start = start
+		latencyInjector.Inject = stage.InjectLatency
+
 		for time.Since(start) < dur {
 			select {
 			case <-ctx.Done():

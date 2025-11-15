@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"time"
@@ -15,12 +16,14 @@ import (
 type Stage struct {
 	VUs      int
 	Duration string
+
+	InjectLatency func(time.Duration, int64) time.Duration
 }
 
 type Scenario struct {
 	Name      string
 	Stages    []Stage
-	NewClient func() *http.Client
+	NewClient func(*LatencyInjector) *http.Client
 }
 
 var (
@@ -43,7 +46,7 @@ var (
 			{VUs: 100, Duration: "20s"},
 			{VUs: 2, Duration: "20s"},
 		},
-		NewClient: func() *http.Client {
+		NewClient: func(_ *LatencyInjector) *http.Client {
 			// This closely follows http.DefaultTransport, except it sets
 			// ForceAttemptHTTP2 to false so that we use HTTP/1.1
 			dialer := &TracingDialer{
@@ -73,8 +76,8 @@ var (
 	Example1_2 = Scenario{
 		Name:   "Example 1.2: HTTP/1.1 client with larger idle pool",
 		Stages: Example1_1.Stages,
-		NewClient: func() *http.Client {
-			client := Example1_1.NewClient()
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example1_1.NewClient(li)
 			transport := client.Transport.(*http.Transport)
 			transport.MaxIdleConnsPerHost = 100
 			return client
@@ -88,8 +91,8 @@ var (
 			{VUs: 100, Duration: "20s"},
 			{VUs: 2, Duration: "20s"},
 		},
-		NewClient: func() *http.Client {
-			client := Example1_1.NewClient()
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example1_1.NewClient(li)
 			transport := client.Transport.(*http.Transport)
 			transport.MaxIdleConnsPerHost = 10
 			transport.MaxConnsPerHost = 20
@@ -104,7 +107,7 @@ var (
 			{VUs: 100, Duration: "20s"},
 			{VUs: 2, Duration: "20s"},
 		},
-		NewClient: func() *http.Client {
+		NewClient: func(_ *LatencyInjector) *http.Client {
 			transport := &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
 				DisableKeepAlives:     false,
@@ -132,15 +135,15 @@ var (
 			{VUs: 400, Duration: "20s"},
 			{VUs: 2, Duration: "20s"},
 		},
-		NewClient: func() *http.Client {
-			return Example2_1.NewClient()
+		NewClient: func(li *LatencyInjector) *http.Client {
+			return Example2_1.NewClient(li)
 		},
 	}
 
 	Example2_3 = Scenario{
 		Name:   "Example 2.3: HTTP/2 client with strict max concurrent streams",
 		Stages: Example2_2.Stages,
-		NewClient: func() *http.Client {
+		NewClient: func(_ *LatencyInjector) *http.Client {
 			transport := &http2.Transport{
 				StrictMaxConcurrentStreams: true,
 				IdleConnTimeout:            90 * time.Second,
@@ -157,10 +160,28 @@ var (
 		Name: "Example 3.1: HTTP/1.1 client with load greatly exceeding idle pool",
 		Stages: []Stage{
 			{VUs: 2, Duration: "20s"},
-			{VUs: 1000, Duration: "60s"},
+			{VUs: 1000, Duration: "20s"},
 			{VUs: 2, Duration: "20s"},
+			{
+				VUs:      1000,
+				Duration: "60s",
+				InjectLatency: func(_ time.Duration, active int64) time.Duration {
+					// Add "queuing" time to simulate access to a finite resource.
+					queueDepth := max(0, active-50)
+					if queueDepth > 0 {
+						jitter := float64(100*time.Millisecond) * rand.Float64()
+						// A deeper queue leads to a longer delay.
+						// While a linear relationship might not be the most accurate,
+						// it's a simple implementation that is effective for the examples.
+						queueDelay := float64(queueDepth) * float64(10*time.Millisecond)
+						return time.Duration(queueDelay + jitter)
+					}
+
+					return 0
+				},
+			},
 		},
-		NewClient: func() *http.Client {
+		NewClient: func(li *LatencyInjector) *http.Client {
 			// This closely follows http.DefaultTransport,
 			// with exceptions called out in comments below
 			dialer := &TracingDialer{
@@ -182,8 +203,9 @@ var (
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
 			}
+			li.Transport = transport
 			return &http.Client{
-				Transport: transport,
+				Transport: li,
 				Timeout:   3 * time.Second,
 			}
 		},
@@ -192,9 +214,9 @@ var (
 	Example3_2 = Scenario{
 		Name:   "Example 3.2: HTTP/1.1 client with rate-limited dialer",
 		Stages: Example3_1.Stages,
-		NewClient: func() *http.Client {
-			client := Example3_1.NewClient()
-			transport := client.Transport.(*http.Transport)
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example3_1.NewClient(li)
+			transport := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
 			baseDial := transport.DialContext
 
 			// Allow bursts up to the size of the idle connection pool
@@ -218,16 +240,16 @@ var (
 	Example3_3 = Scenario{
 		Name:   "Example 3.3: HTTP/1.1 client with adaptive concurrency limiter",
 		Stages: Example3_1.Stages,
-		NewClient: func() *http.Client {
-			client := Example3_1.NewClient()
-			transport := client.Transport.(*http.Transport)
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example3_1.NewClient(li)
 
-			lim, err := NewGradient2Limiter(2, transport.MaxConnsPerHost, 1, 0.001, 4.0, 2<<4, 2<<14)
+			lim, err := NewGradient2Limiter(2, 100, 1, 0.001, 4.0, 2<<4, 2<<14)
 			if err != nil {
 				log.Fatalf("failed to create Gradient2Limiter: %v", err)
 			}
 
-			client.Transport = NewAdaptiveTransport(transport, lim)
+			// The adaptive transport needs to wrap the latency injector
+			client.Transport = NewAdaptiveTransport(li, lim)
 			return client
 		},
 	}

@@ -1,7 +1,11 @@
 package main
 
-// This is the semapohre implementation from golang.org/x/sync/semaphore,
-// modified to add a Count() method and a SetSize() method.
+// This is the semaphore implementation from golang.org/x/sync/semaphore,
+// modified in the following ways:
+// - adds a Count() method
+// - adds a SetSize() method
+// - support acquiring and releasing only a single token per call
+// - removes the waiter struct, since each waiter can have only one token
 
 import (
 	"container/list"
