@@ -37,6 +37,7 @@ var (
 		"3.1": Example3_1,
 		"3.2": Example3_2,
 		"3.3": Example3_3,
+		"3.4": Example3_4,
 	}
 
 	Example1_1 = Scenario{
@@ -250,6 +251,32 @@ var (
 
 			// The adaptive transport needs to wrap the latency injector
 			client.Transport = NewAdaptiveTransport(li, lim)
+			return client
+		},
+	}
+
+	Example3_4 = Scenario{
+		Name:   "Example 3.4: HTTP/1.1 client with latency-informed dialer",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example3_1.NewClient(li)
+			transport := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
+			baseDial := transport.DialContext
+
+			measure := NewMeasuringTransport(li, 2<<4, 2<<14)
+			client.Transport = measure
+
+			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// Only allow new connections if the short-term median latency is below the long-term median latency.
+				if measure.Active() > 2 && measure.Short.Quantile(0.5) > measure.Long.Quantile(0.5) {
+					// Block until the context is canceled
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+
+				return baseDial(ctx, network, addr)
+			}
+
 			return client
 		},
 	}

@@ -196,3 +196,38 @@ func (t *LatencyInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 	MetricInjectedDuration.Record(req.Context(), latency.Milliseconds())
 	return resp, err
 }
+
+type MeasuringTransport struct {
+	base   http.RoundTripper
+	active atomic.Int64
+
+	// mux for the moving windows
+	mux   sync.Mutex
+	Short *mwnd.FixedWindow[int64]
+	Long  *mwnd.FixedWindow[int64]
+}
+
+func NewMeasuringTransport(base http.RoundTripper, shortSize, longSize int) *MeasuringTransport {
+	return &MeasuringTransport{
+		base:  base,
+		Short: mwnd.Fixed[int64](shortSize),
+		Long:  mwnd.Fixed[int64](longSize),
+	}
+}
+
+func (t *MeasuringTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	t.active.Add(1)
+	defer t.active.Add(-1)
+	resp, err := t.base.RoundTrip(req)
+	rtt := time.Since(start)
+	t.mux.Lock()
+	t.Short.Put(int64(rtt))
+	t.Long.Put(int64(rtt))
+	t.mux.Unlock()
+	return resp, err
+}
+
+func (t *MeasuringTransport) Active() int64 {
+	return t.active.Load()
+}
