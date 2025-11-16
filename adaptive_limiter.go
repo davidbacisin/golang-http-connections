@@ -129,16 +129,16 @@ func (l *Gradient2Limiter) updateLocked(gradient float64) {
 }
 
 type AdaptiveTransport struct {
-	base    http.RoundTripper
-	limiter *Gradient2Limiter
-	sem     *Weighted
+	Transport http.RoundTripper
+	limiter   *Gradient2Limiter
+	sem       *Weighted
 }
 
 func NewAdaptiveTransport(base http.RoundTripper, limiter *Gradient2Limiter) *AdaptiveTransport {
 	t := &AdaptiveTransport{
-		base:    base,
-		limiter: limiter,
-		sem:     NewWeighted(limiter.Limit()),
+		Transport: base,
+		limiter:   limiter,
+		sem:       NewWeighted(limiter.Limit()),
 	}
 	return t
 }
@@ -156,7 +156,7 @@ func (t *AdaptiveTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	MetricActiveRequests.Record(ctx, semCount)
 
 	start := time.Now()
-	resp, err := t.base.RoundTrip(req)
+	resp, err := t.Transport.RoundTrip(req)
 	rtt := time.Since(start)
 	if err != nil {
 		t.limiter.OnDrop()
@@ -198,8 +198,8 @@ func (t *LatencyInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 type MeasuringTransport struct {
-	base   http.RoundTripper
-	active atomic.Int64
+	Transport http.RoundTripper
+	active    atomic.Int64
 
 	// mux for the moving windows
 	mux   sync.Mutex
@@ -209,9 +209,9 @@ type MeasuringTransport struct {
 
 func NewMeasuringTransport(base http.RoundTripper, shortSize, longSize int) *MeasuringTransport {
 	return &MeasuringTransport{
-		base:  base,
-		Short: mwnd.Fixed[int64](shortSize),
-		Long:  mwnd.Fixed[int64](longSize),
+		Transport: base,
+		Short:     mwnd.Fixed[int64](shortSize),
+		Long:      mwnd.Fixed[int64](longSize),
 	}
 }
 
@@ -219,7 +219,7 @@ func (t *MeasuringTransport) RoundTrip(req *http.Request) (*http.Response, error
 	start := time.Now()
 	t.active.Add(1)
 	defer t.active.Add(-1)
-	resp, err := t.base.RoundTrip(req)
+	resp, err := t.Transport.RoundTrip(req)
 	rtt := time.Since(start)
 	t.mux.Lock()
 	t.Short.Put(int64(rtt))

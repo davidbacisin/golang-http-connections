@@ -28,16 +28,22 @@ type Scenario struct {
 
 var (
 	Scenarios = map[string]Scenario{
+		// Part 1
 		"1.1": Example1_1,
 		"1.2": Example1_2,
 		"1.3": Example1_3,
 		"2.1": Example2_1,
 		"2.2": Example2_2,
 		"2.3": Example2_3,
+		// Part 2
 		"3.1": Example3_1,
 		"3.2": Example3_2,
-		"3.3": Example3_3,
-		"3.4": Example3_4,
+		"4.1": Example4_1,
+		"4.2": Example4_2,
+		"5.1": Example5_1,
+		"5.2": Example5_2,
+		"6.1": Example6_1,
+		"6.2": Example6_2,
 	}
 
 	Example1_1 = Scenario{
@@ -167,18 +173,18 @@ var (
 				VUs:      1000,
 				Duration: "60s",
 				InjectLatency: func(_ time.Duration, active int64) time.Duration {
+					delay := float64(100*time.Millisecond) * rand.Float64()
+
 					// Add "queuing" time to simulate access to a finite resource.
 					queueDepth := max(0, active-50)
 					if queueDepth > 0 {
-						jitter := float64(100*time.Millisecond) * rand.Float64()
 						// A deeper queue leads to a longer delay.
 						// While a linear relationship might not be the most accurate,
 						// it's a simple implementation that is effective for the examples.
-						queueDelay := float64(queueDepth) * float64(10*time.Millisecond)
-						return time.Duration(queueDelay + jitter)
+						delay += float64(queueDepth) * float64(10*time.Millisecond)
 					}
 
-					return 0
+					return time.Duration(delay)
 				},
 			},
 		},
@@ -213,7 +219,18 @@ var (
 	}
 
 	Example3_2 = Scenario{
-		Name:   "Example 3.2: HTTP/1.1 client with rate-limited dialer",
+		Name:   "Example 3.2: HTTP/2 client with load greatly exceeding idle pool",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example3_1.NewClient(li)
+			transport := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
+			transport.ForceAttemptHTTP2 = true
+			return client
+		},
+	}
+
+	Example4_1 = Scenario{
+		Name:   "Example 4.1: HTTP/1.1 client with rate-limited dialer",
 		Stages: Example3_1.Stages,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
@@ -238,8 +255,19 @@ var (
 		},
 	}
 
-	Example3_3 = Scenario{
-		Name:   "Example 3.3: HTTP/1.1 client with adaptive concurrency limiter",
+	Example4_2 = Scenario{
+		Name:   "Example 4.2: HTTP/2 client with rate-limited dialer",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example4_1.NewClient(li)
+			base := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
+			base.ForceAttemptHTTP2 = true
+			return client
+		},
+	}
+
+	Example5_1 = Scenario{
+		Name:   "Example 5.1: HTTP/1.1 client with adaptive concurrency limiter",
 		Stages: Example3_1.Stages,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
@@ -255,18 +283,32 @@ var (
 		},
 	}
 
-	Example3_4 = Scenario{
-		Name:   "Example 3.4: HTTP/1.1 client with latency-informed dialer",
+	Example5_2 = Scenario{
+		Name:   "Example 5.2: HTTP/2 client with adaptive concurrency limiter",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example5_1.NewClient(li)
+			// Not pretty, but get the base transport
+			base := client.Transport.(*AdaptiveTransport).
+				Transport.(*LatencyInjector).
+				Transport.(*http.Transport)
+			base.ForceAttemptHTTP2 = true
+			return client
+		},
+	}
+
+	Example6_1 = Scenario{
+		Name:   "Example 6.1: HTTP/1.1 client with latency-informed dialer",
 		Stages: Example3_1.Stages,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
-			transport := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
-			baseDial := transport.DialContext
+			base := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
+			baseDial := base.DialContext
 
 			measure := NewMeasuringTransport(li, 2<<4, 2<<14)
 			client.Transport = measure
 
-			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				// Only allow new connections if the short-term median latency is below the long-term median latency.
 				if measure.Active() > 2 && measure.Short.Quantile(0.5) > measure.Long.Quantile(0.5) {
 					// Block until the context is canceled
@@ -277,6 +319,19 @@ var (
 				return baseDial(ctx, network, addr)
 			}
 
+			return client
+		},
+	}
+
+	Example6_2 = Scenario{
+		Name:   "Example 6.2: HTTP/2 client with latency-informed dialer",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example6_1.NewClient(li)
+			base := client.Transport.(*MeasuringTransport).
+				Transport.(*LatencyInjector).
+				Transport.(*http.Transport)
+			base.ForceAttemptHTTP2 = true
 			return client
 		},
 	}
