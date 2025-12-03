@@ -305,12 +305,14 @@ var (
 			base := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
 			baseDial := base.DialContext
 
+			const alpha = 250 * float64(time.Nanosecond)
 			measure := NewMeasuringTransport(li, 2<<4, 2<<14)
 			client.Transport = measure
 
 			base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// Only allow new connections if the short-term median latency is below the long-term median latency.
-				if measure.Active() > 2 && measure.Short.Quantile(0.5) > measure.Long.Quantile(0.5) {
+				// Only allow new connections if the short-term mean latency is below the long-term mean
+				// latency by more than alpha.
+				if diff := measure.Long.Mean() - measure.Short.Mean(); measure.Active() > 2 && diff < alpha {
 					// Block until the context is canceled
 					<-ctx.Done()
 					return nil, ctx.Err()
