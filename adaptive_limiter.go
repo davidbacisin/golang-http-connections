@@ -19,7 +19,7 @@ var (
 	MetricActiveRequests = must(meter.Int64Gauge("http.client.request.active",
 		metric.WithDescription("the current number of active requests in the adaptive transport"),
 	))
-	MetricInjectedDuration = must(meter.Int64Histogram("http.client.request.injected.duration",
+	MetricInjectedDuration = must(meter.Float64Histogram("http.client.request.injected.duration",
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(durationBuckets...),
 		metric.WithDescription("the latency injected into the HTTP request"),
@@ -193,7 +193,7 @@ func (t *LatencyInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 		case <-time.After(latency):
 		}
 	}
-	MetricInjectedDuration.Record(req.Context(), latency.Milliseconds())
+	MetricInjectedDuration.Record(req.Context(), latency.Seconds())
 	return resp, err
 }
 
