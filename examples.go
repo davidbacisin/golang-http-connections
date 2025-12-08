@@ -267,38 +267,7 @@ var (
 	}
 
 	Example5_1 = Scenario{
-		Name:   "Example 5.1: HTTP/1.1 client with adaptive concurrency limiter",
-		Stages: Example3_1.Stages,
-		NewClient: func(li *LatencyInjector) *http.Client {
-			client := Example3_1.NewClient(li)
-
-			lim, err := NewGradient2Limiter(2, 100, 1, 0.001, 4.0, 2<<4, 2<<14)
-			if err != nil {
-				log.Fatalf("failed to create Gradient2Limiter: %v", err)
-			}
-
-			// The adaptive transport needs to wrap the latency injector
-			client.Transport = NewAdaptiveTransport(li, lim)
-			return client
-		},
-	}
-
-	Example5_2 = Scenario{
-		Name:   "Example 5.2: HTTP/2 client with adaptive concurrency limiter",
-		Stages: Example3_1.Stages,
-		NewClient: func(li *LatencyInjector) *http.Client {
-			client := Example5_1.NewClient(li)
-			// Not pretty, but get the base transport
-			base := client.Transport.(*AdaptiveTransport).
-				Transport.(*LatencyInjector).
-				Transport.(*http.Transport)
-			base.ForceAttemptHTTP2 = true
-			return client
-		},
-	}
-
-	Example6_1 = Scenario{
-		Name:   "Example 6.1: HTTP/1.1 client with latency-informed dialer",
+		Name:   "Example 5.1: HTTP/1.1 client with latency-informed dialer",
 		Stages: Example3_1.Stages,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
@@ -325,12 +294,43 @@ var (
 		},
 	}
 
+	Example5_2 = Scenario{
+		Name:   "Example 5.2: HTTP/2 client with latency-informed dialer",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example5_1.NewClient(li)
+			base := client.Transport.(*MeasuringTransport).
+				Transport.(*LatencyInjector).
+				Transport.(*http.Transport)
+			base.ForceAttemptHTTP2 = true
+			return client
+		},
+	}
+
+	Example6_1 = Scenario{
+		Name:   "Example 6.1: HTTP/1.1 client with adaptive concurrency limiter",
+		Stages: Example3_1.Stages,
+		NewClient: func(li *LatencyInjector) *http.Client {
+			client := Example3_1.NewClient(li)
+
+			lim, err := NewGradient2Limiter(2, 100, 1, 0.001, 4.0, 2<<4, 2<<14)
+			if err != nil {
+				log.Fatalf("failed to create Gradient2Limiter: %v", err)
+			}
+
+			// The adaptive transport needs to wrap the latency injector
+			client.Transport = NewAdaptiveTransport(li, lim)
+			return client
+		},
+	}
+
 	Example6_2 = Scenario{
-		Name:   "Example 6.2: HTTP/2 client with latency-informed dialer",
+		Name:   "Example 6.2: HTTP/2 client with adaptive concurrency limiter",
 		Stages: Example3_1.Stages,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example6_1.NewClient(li)
-			base := client.Transport.(*MeasuringTransport).
+			// Not pretty, but get the base transport
+			base := client.Transport.(*AdaptiveTransport).
 				Transport.(*LatencyInjector).
 				Transport.(*http.Transport)
 			base.ForceAttemptHTTP2 = true
