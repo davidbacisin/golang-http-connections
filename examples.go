@@ -46,6 +46,30 @@ var (
 		"6.2": Example6_2,
 	}
 
+	InjectedLatencySimulation = []Stage{
+		{VUs: 2, Duration: "20s"},
+		{VUs: 1000, Duration: "20s"},
+		{VUs: 2, Duration: "20s"},
+		{
+			VUs:      1000,
+			Duration: "60s",
+			InjectLatency: func(_ time.Duration, active int64) time.Duration {
+				delay := float64(100*time.Millisecond) * rand.Float64()
+
+				// Add "queuing" time to simulate access to a finite resource.
+				queueDepth := max(0, active-50)
+				if queueDepth > 0 {
+					// A deeper queue leads to a longer delay.
+					// While a linear relationship might not be the most realistic,
+					// it's a simple implementation that is effective for the examples.
+					delay += float64(queueDepth) * float64(10*time.Millisecond)
+				}
+
+				return time.Duration(delay)
+			},
+		},
+	}
+
 	Example1_1 = Scenario{
 		Name: "Example 1.1: default HTTP/1.1 client",
 		Stages: []Stage{
@@ -164,30 +188,8 @@ var (
 	}
 
 	Example3_1 = Scenario{
-		Name: "Example 3.1: HTTP/1.1 client with load greatly exceeding idle pool",
-		Stages: []Stage{
-			{VUs: 2, Duration: "20s"},
-			{VUs: 1000, Duration: "20s"},
-			{VUs: 2, Duration: "20s"},
-			{
-				VUs:      1000,
-				Duration: "60s",
-				InjectLatency: func(_ time.Duration, active int64) time.Duration {
-					delay := float64(100*time.Millisecond) * rand.Float64()
-
-					// Add "queuing" time to simulate access to a finite resource.
-					queueDepth := max(0, active-50)
-					if queueDepth > 0 {
-						// A deeper queue leads to a longer delay.
-						// While a linear relationship might not be the most accurate,
-						// it's a simple implementation that is effective for the examples.
-						delay += float64(queueDepth) * float64(10*time.Millisecond)
-					}
-
-					return time.Duration(delay)
-				},
-			},
-		},
+		Name:   "Example 3.1: HTTP/1.1 client with load greatly exceeding idle pool",
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			// This closely follows http.DefaultTransport,
 			// with exceptions called out in comments below
@@ -220,7 +222,7 @@ var (
 
 	Example3_2 = Scenario{
 		Name:   "Example 3.2: HTTP/2 client with load greatly exceeding idle pool",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
 			transport := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
@@ -231,7 +233,7 @@ var (
 
 	Example4_1 = Scenario{
 		Name:   "Example 4.1: HTTP/1.1 client with rate-limited dialer",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
 			transport := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
@@ -257,7 +259,7 @@ var (
 
 	Example4_2 = Scenario{
 		Name:   "Example 4.2: HTTP/2 client with rate-limited dialer",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example4_1.NewClient(li)
 			base := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
@@ -268,7 +270,7 @@ var (
 
 	Example5_1 = Scenario{
 		Name:   "Example 5.1: HTTP/1.1 client with latency-informed dialer",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
 			base := client.Transport.(*LatencyInjector).Transport.(*http.Transport)
@@ -296,7 +298,7 @@ var (
 
 	Example5_2 = Scenario{
 		Name:   "Example 5.2: HTTP/2 client with latency-informed dialer",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example5_1.NewClient(li)
 			base := client.Transport.(*MeasuringTransport).
@@ -309,7 +311,7 @@ var (
 
 	Example6_1 = Scenario{
 		Name:   "Example 6.1: HTTP/1.1 client with adaptive concurrency limiter",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example3_1.NewClient(li)
 
@@ -326,7 +328,7 @@ var (
 
 	Example6_2 = Scenario{
 		Name:   "Example 6.2: HTTP/2 client with adaptive concurrency limiter",
-		Stages: Example3_1.Stages,
+		Stages: InjectedLatencySimulation,
 		NewClient: func(li *LatencyInjector) *http.Client {
 			client := Example6_1.NewClient(li)
 			// Not pretty, but get the base transport
