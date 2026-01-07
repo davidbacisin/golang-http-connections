@@ -1,11 +1,12 @@
 # golang-http-connections
 This sample application tests various configurations of the built-in `net/http` Go HTTP client
 to explore how these settings impact performance. See 
-[my blog post](https://davidbacisin.com/writing/golang-http-connection-pools-1) for a discussion of 
+[my first](https://davidbacisin.com/writing/golang-http-connection-pools-1) 
+and [second blog posts](https://davidbacisin.com/writing/golang-http-connection-pools-2-adaptive-concurrency) for a discussion of 
 the project and its results.
 
 ## Requirements
-- [Go version 1.23 or later](https://go.dev/dl/)
+- [Go version 1.25 or later](https://go.dev/dl/)
 - Docker and Docker Compose, such as [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - netstat in your `PATH`
 
